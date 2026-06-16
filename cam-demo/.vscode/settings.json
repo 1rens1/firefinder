@@ -1,0 +1,23 @@
+{
+	"python.defaultInterpreterPath": "/usr/bin/python3",
+	"python.analysis.extraPaths": [
+		"/usr/lib/python3/dist-packages"
+	],
+	"python.analysis.typeCheckingMode": "basic",
+	"python.analysis.autoImportCompletions": true,
+	"python.analysis.packageIndexDepths": [
+		{
+			"name": "picamera2",
+			"depth": 3,
+			"includeAllSymbols": true
+		}
+	],
+	"editor.insertSpaces": false,
+	"editor.tabSize": 2,
+	"editor.detectIndentation": false,
+	"[python]": {
+		"editor.defaultFormatter": "ms-python.black-formatter",
+		"editor.insertSpaces": true,
+		"editor.tabSize": 4
+	}
+}
