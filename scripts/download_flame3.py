@@ -42,7 +42,7 @@ def download_dataset(zip_path: Path, force: bool) -> None:
         print(f"Found existing {zip_path}. Use --force to re-download.")
         return
 
-    run([
+    cmd = [
         "kaggle",
         "datasets",
         "download",
@@ -50,8 +50,11 @@ def download_dataset(zip_path: Path, force: bool) -> None:
         DATASET,
         "-p",
         str(zip_path.parent),
-        "--force" if force else "",
-    ])
+    ]
+    if force:
+        cmd.append("--force")
+
+    run(cmd)
 
 
 def extract_dataset(zip_path: Path, out_dir: Path, clean: bool) -> None:
