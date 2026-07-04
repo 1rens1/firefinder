@@ -195,7 +195,9 @@ def get_args():
     return parser.parse_args()
 
 
-if __name__ == "__main__":
+def main() -> None:
+    global args, imx500, intrinsics, picam2
+
     args = get_args()
 
     imx500 = IMX500(args.model)
@@ -236,3 +238,7 @@ if __name__ == "__main__":
 
     threading.Thread(target=inference_loop, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+
+
+if __name__ == "__main__":
+    main()

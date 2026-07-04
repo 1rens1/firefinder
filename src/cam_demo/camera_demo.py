@@ -62,9 +62,14 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
 
-picam2 = Picamera2()
-picam2.configure(picam2.create_video_configuration(main={"size": (640, 480)}))
-picam2.start_recording(MJPEGEncoder(), FileOutput(output))
+def main() -> None:
+    picam2 = Picamera2()
+    picam2.configure(picam2.create_video_configuration(main={"size": (640, 480)}))
+    picam2.start_recording(MJPEGEncoder(), FileOutput(output))
 
-print(f"Open: http://0.0.0.0:{PORT}")
-ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+    print(f"Open: http://0.0.0.0:{PORT}")
+    ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+
+
+if __name__ == "__main__":
+    main()

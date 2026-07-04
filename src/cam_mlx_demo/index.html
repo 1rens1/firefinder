@@ -1,0 +1,1109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Firefinder Camera + Thermal Overlay</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --overlay-opacity: 0.65;
+      background: #000;
+      color: #f6f8fb;
+    }
+
+    * { box-sizing: border-box; }
+
+    html,
+    body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+
+    .camera-panel {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      background: #000;
+      overflow: hidden;
+    }
+
+    #camera-stream {
+      width: 100vw;
+      height: 100vh;
+      object-fit: contain;
+      object-position: center;
+      display: block;
+      transform: scale(
+        var(--rgb-flip-x, 1),
+        var(--rgb-flip-y, 1)
+      );
+    }
+
+    #overlay {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      width: 256px;
+      height: 192px;
+      cursor: move;
+      touch-action: none;
+      user-select: none;
+    }
+
+    #overlay canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      opacity: var(--overlay-opacity);
+    }
+
+    .resize-zone {
+      position: absolute;
+      width: 30px;
+      height: 30px;
+    }
+
+    .resize-zone.nw {
+      top: 0;
+      left: 0;
+      cursor: nwse-resize;
+    }
+
+    .resize-zone.ne {
+      top: 0;
+      right: 0;
+      cursor: nesw-resize;
+    }
+
+    .resize-zone.sw {
+      bottom: 0;
+      left: 0;
+      cursor: nesw-resize;
+    }
+
+    .resize-zone.se {
+      right: 0;
+      bottom: 0;
+      cursor: nwse-resize;
+    }
+
+    .spot-label,
+    #mouseReadout {
+      position: absolute;
+      z-index: 2;
+      transform: translate(10px, -50%);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 750;
+      line-height: 1.15;
+      white-space: nowrap;
+      pointer-events: none;
+      text-shadow:
+        0 1px 2px rgba(0, 0, 0, 0.75),
+        0 0 4px rgba(0, 0, 0, 0.65);
+    }
+
+    .spot-label::before,
+    #mouseReadout::before {
+      content: "";
+      position: absolute;
+      left: -10px;
+      top: 50%;
+      width: 15px;
+      height: 15px;
+      transform: translate(-50%, -50%);
+      background:
+        linear-gradient(#fff, #fff) center / 15px 2px no-repeat,
+        linear-gradient(#fff, #fff) center / 2px 15px no-repeat;
+      filter:
+        drop-shadow(0 1px 1px rgba(0, 0, 0, 0.7))
+        drop-shadow(0 0 2px rgba(0, 0, 0, 0.65));
+    }
+
+    .spot-label.hidden,
+    #mouseReadout.hidden {
+      display: none;
+    }
+
+    .hud {
+      position: fixed;
+      z-index: 5;
+      color: #f6f8fb;
+      background: rgba(5, 8, 13, 0.74);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.38);
+      backdrop-filter: blur(10px);
+    }
+
+    .controls {
+      top: 58px;
+      left: 14px;
+      width: min(300px, calc(100vw - 28px));
+      padding: 12px;
+      border-radius: 8px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .controls[hidden] {
+      display: none;
+    }
+
+    #menuButton {
+      top: 14px;
+      left: 14px;
+      width: 42px;
+      height: 42px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      cursor: pointer;
+    }
+
+    .hamburger {
+      width: 20px;
+      height: 14px;
+      display: grid;
+      align-content: space-between;
+    }
+
+    .hamburger span {
+      height: 2px;
+      background: #f6f8fb;
+      border-radius: 999px;
+    }
+
+    label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      font-size: 0.9rem;
+      font-weight: 650;
+    }
+
+    .toggle-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .toggle {
+      justify-content: start;
+      padding: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .toggle.stacked {
+      align-items: start;
+    }
+
+    .toggle-text {
+      display: grid;
+      gap: 2px;
+    }
+
+    .toggle-description {
+      color: #cbd5e1;
+      font-size: 0.75rem;
+      font-weight: 500;
+      line-height: 1.25;
+    }
+
+    .toggle input {
+      accent-color: #ffcd43;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: #ffcd43;
+    }
+
+    #status {
+      font-size: 0.82rem;
+      color: #cbd5e1;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .temperature-scale {
+      right: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      display: grid;
+      grid-template-columns: 14px auto;
+      gap: 6px;
+      align-items: stretch;
+      height: min(70vh, 420px);
+      min-height: 220px;
+      padding: 8px 6px;
+      border-radius: 8px;
+      pointer-events: none;
+    }
+
+    #scaleGradient {
+      width: 14px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      background: linear-gradient(
+        to top,
+        rgb(42, 11, 88),
+        rgb(97, 48, 164),
+        rgb(184, 109, 213),
+        rgb(255, 232, 92)
+      );
+    }
+
+    .scale-labels {
+      display: grid;
+      align-content: space-between;
+      font-size: 0.72rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+      min-width: 44px;
+    }
+
+    @media (max-width: 640px) {
+      .controls {
+        left: 10px;
+        top: 54px;
+        padding: 10px;
+      }
+
+      .temperature-scale {
+        right: 6px;
+        height: min(54vh, 320px);
+        min-height: 180px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <section class="camera-panel" aria-label="Camera feed with thermal overlay">
+    <img id="camera-stream" src="/stream" alt="Camera stream">
+    <div id="overlay" aria-label="Thermal overlay">
+      <canvas id="thermal" width="256" height="192"></canvas>
+      <div id="spotHot" class="spot-label hidden"></div>
+      <div id="spotCold" class="spot-label hidden"></div>
+      <div id="mouseReadout" class="hidden"></div>
+      <span class="resize-zone nw" data-handle="nw" aria-hidden="true"></span>
+      <span class="resize-zone ne" data-handle="ne" aria-hidden="true"></span>
+      <span class="resize-zone sw" data-handle="sw" aria-hidden="true"></span>
+      <span class="resize-zone se" data-handle="se" aria-hidden="true"></span>
+    </div>
+  </section>
+
+  <button id="menuButton" class="hud" type="button" aria-expanded="false" aria-controls="controls" aria-label="Open controls">
+    <span class="hamburger" aria-hidden="true">
+      <span></span>
+      <span></span>
+      <span></span>
+    </span>
+  </button>
+
+  <section id="controls" class="controls hud" aria-label="Thermal overlay controls" hidden>
+    <label>
+      <span>Overlay opacity</span>
+      <span id="opacityValue">65%</span>
+    </label>
+    <input id="opacity" type="range" min="0" max="1" value="0.65" step="0.05">
+    <label>RGB camera flip</label>
+    <div class="toggle-row">
+      <label class="toggle"><input id="rgbFlipX" type="checkbox"> Horizontal</label>
+      <label class="toggle"><input id="rgbFlipY" type="checkbox"> Vertical</label>
+    </div>
+    <label>Thermal flip</label>
+    <div class="toggle-row">
+      <label class="toggle"><input id="thermalFlipX" type="checkbox"> Horizontal</label>
+      <label class="toggle"><input id="thermalFlipY" type="checkbox"> Vertical</label>
+    </div>
+    <label class="toggle stacked">
+      <input id="smoothing" type="checkbox">
+      <span class="toggle-text">
+        <span>Smoothing</span>
+        <span class="toggle-description">Uses bilinear interpolation for the thermal overlay.</span>
+      </span>
+    </label>
+    <label class="toggle stacked">
+      <input id="artifactReduction" type="checkbox">
+      <span class="toggle-text">
+        <span>Artifact reduction</span>
+        <span class="toggle-description">Uses a light neighbor median to reduce checkerboard motion artifacts.</span>
+      </span>
+    </label>
+    <div id="status">Waiting for stream...</div>
+  </section>
+
+  <aside class="temperature-scale hud" aria-label="Thermal temperature scale">
+    <div id="scaleGradient"></div>
+    <div class="scale-labels">
+      <span id="scaleMax">--.- C</span>
+      <span id="scaleHigh">--.- C</span>
+      <span id="scaleMid">--.- C</span>
+      <span id="scaleLow">--.- C</span>
+      <span id="scaleMin">--.- C</span>
+    </div>
+  </aside>
+
+  <script>
+    const overlay = document.getElementById("overlay");
+    const cameraStream = document.getElementById("camera-stream");
+    const thermalCanvas = document.getElementById("thermal");
+    const thermalContext = thermalCanvas.getContext("2d");
+    const menuButton = document.getElementById("menuButton");
+    const controls = document.getElementById("controls");
+    const opacityInput = document.getElementById("opacity");
+    const opacityValue = document.getElementById("opacityValue");
+    const rgbFlipX = document.getElementById("rgbFlipX");
+    const rgbFlipY = document.getElementById("rgbFlipY");
+    const thermalFlipX = document.getElementById("thermalFlipX");
+    const thermalFlipY = document.getElementById("thermalFlipY");
+    const smoothing = document.getElementById("smoothing");
+    const artifactReduction = document.getElementById("artifactReduction");
+    const statusEl = document.getElementById("status");
+    const scaleMin = document.getElementById("scaleMin");
+    const scaleLow = document.getElementById("scaleLow");
+    const scaleMid = document.getElementById("scaleMid");
+    const scaleHigh = document.getElementById("scaleHigh");
+    const scaleMax = document.getElementById("scaleMax");
+    const spotHot = document.getElementById("spotHot");
+    const spotCold = document.getElementById("spotCold");
+    const mouseReadout = document.getElementById("mouseReadout");
+
+    const WIDTH = 32;
+    const HEIGHT = 24;
+    const ASPECT_RATIO = WIDTH / HEIGHT;
+    const MIN_OVERLAY_WIDTH = 16;
+    const SETTINGS_KEY = "firefinder.camMlxDemo.settings";
+    const EXTREME_Z_SCORE = 0.9;
+    const EXTREME_MIN_DELTA_C = 1.2;
+    const EXTREME_MIN_AREA = 5;
+    const EXTREME_SECONDARY_SCORE_RATIO = 0.65;
+    const ARTIFACT_MIN_DELTA_C = 1.2;
+    const THERMAL_POLL_MS = 250;
+    const COLOR_STOPS = [
+      [42, 11, 88],
+      [97, 48, 164],
+      [184, 109, 213],
+      [255, 232, 92],
+    ];
+
+    let activePointerId = null;
+    let interactionMode = null;
+    let activeHandle = null;
+    let dragOffsetX = 0;
+    let dragOffsetY = 0;
+    let resizeStart = null;
+    let lastRawFrame = null;
+    let lastFrame = null;
+    let mouseOverlayPoint = null;
+    let settings = loadSettings();
+    let renderBuffer = null;
+    let overlayGeometryDirty = false;
+
+    function clamp(value, min, max) {
+      if (max < min) return min;
+      return Math.min(max, Math.max(min, value));
+    }
+
+    function loadSettings() {
+      const defaults = {
+        overlayOpacity: 0.65,
+        rgbFlipX: false,
+        rgbFlipY: false,
+        thermalFlipX: false,
+        thermalFlipY: false,
+        smoothing: true,
+        artifactReduction: true,
+        menuOpen: false,
+        overlayLeft: 20,
+        overlayTop: 20,
+        overlayWidth: 256,
+      };
+
+      try {
+        return {
+          ...defaults,
+          ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}"),
+        };
+      } catch (error) {
+        return defaults;
+      }
+    }
+
+    function saveSettings() {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    }
+
+    function applySettings() {
+      updateOpacityControl();
+      syncCheckboxes();
+      setMenuOpen(settings.menuOpen, false);
+      updateRgbFlip();
+    }
+
+    function updateOpacityControl() {
+      opacityInput.value = settings.overlayOpacity;
+      opacityValue.textContent = `${Math.round(settings.overlayOpacity * 100)}%`;
+      document.documentElement.style.setProperty("--overlay-opacity", settings.overlayOpacity);
+    }
+
+    function syncCheckboxes() {
+      [
+        [rgbFlipX, "rgbFlipX"],
+        [rgbFlipY, "rgbFlipY"],
+        [thermalFlipX, "thermalFlipX"],
+        [thermalFlipY, "thermalFlipY"],
+        [smoothing, "smoothing"],
+        [artifactReduction, "artifactReduction"],
+      ].forEach(([input, key]) => {
+        input.checked = settings[key];
+      });
+    }
+
+    function setOverlayOpacity(opacity) {
+      settings.overlayOpacity = clamp(opacity, 0, 1);
+      saveSettings();
+      updateOpacityControl();
+    }
+
+    function saveOverlayGeometry() {
+      settings.overlayLeft = overlay.offsetLeft;
+      settings.overlayTop = overlay.offsetTop;
+      settings.overlayWidth = overlay.offsetWidth;
+      saveSettings();
+    }
+
+    function getPanelRect() {
+      return overlay.parentElement.getBoundingClientRect();
+    }
+
+    function getOverlayRect() {
+      return {
+        left: overlay.offsetLeft,
+        top: overlay.offsetTop,
+        width: overlay.offsetWidth,
+        height: overlay.offsetHeight,
+      };
+    }
+
+    function resizeCanvasToOverlay() {
+      const width = Math.max(1, Math.round(overlay.clientWidth));
+      const height = Math.max(1, Math.round(overlay.clientHeight));
+      if (thermalCanvas.width !== width || thermalCanvas.height !== height) {
+        thermalCanvas.width = width;
+        thermalCanvas.height = height;
+      }
+      if (lastRawFrame) drawThermal(lastRawFrame);
+    }
+
+    function persistOverlayGeometry(shouldSave) {
+      if (shouldSave) {
+        saveOverlayGeometry();
+        overlayGeometryDirty = false;
+      } else {
+        overlayGeometryDirty = true;
+      }
+    }
+
+    function setOverlayGeometry(left, top, width = overlay.offsetWidth, shouldSave = true) {
+      const nextWidth = Math.max(MIN_OVERLAY_WIDTH, width);
+      const nextHeight = nextWidth / ASPECT_RATIO;
+
+      overlay.style.width = `${nextWidth}px`;
+      overlay.style.height = `${nextHeight}px`;
+      overlay.style.left = `${left}px`;
+      overlay.style.top = `${top}px`;
+      resizeCanvasToOverlay();
+      persistOverlayGeometry(shouldSave);
+    }
+
+    function setPosition(x, y, shouldSave = true) {
+      overlay.style.left = `${x}px`;
+      overlay.style.top = `${y}px`;
+      persistOverlayGeometry(shouldSave);
+    }
+
+    function setOverlayBounds(left, top, width, shouldSave = true) {
+      setOverlayGeometry(left, top, width, shouldSave);
+    }
+
+    function zoomOverlayAt(clientX, clientY, factor) {
+      const panelRect = getPanelRect();
+      const rect = overlay.getBoundingClientRect();
+      const nextWidth = Math.max(MIN_OVERLAY_WIDTH, overlay.offsetWidth * factor);
+      const nextHeight = nextWidth / ASPECT_RATIO;
+      const anchorX = clientX - rect.left;
+      const anchorY = clientY - rect.top;
+      const scale = nextWidth / overlay.offsetWidth;
+      const left = rect.left - panelRect.left + anchorX - anchorX * scale;
+      const top = rect.top - panelRect.top + anchorY - anchorY * scale;
+
+      setOverlayGeometry(left, top, nextWidth);
+    }
+
+    overlay.addEventListener("pointerdown", (event) => {
+      activePointerId = event.pointerId;
+      const rect = overlay.getBoundingClientRect();
+      const handle = event.target.closest(".resize-zone");
+
+      if (handle) {
+        interactionMode = "resize";
+        activeHandle = handle.dataset.handle;
+        resizeStart = {
+          pointerX: event.clientX,
+          pointerY: event.clientY,
+          ...getOverlayRect(),
+        };
+      } else {
+        interactionMode = "drag";
+        dragOffsetX = event.clientX - rect.left;
+        dragOffsetY = event.clientY - rect.top;
+      }
+
+      overlay.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    });
+
+    overlay.addEventListener("pointermove", (event) => {
+      if (event.pointerId !== activePointerId) return;
+
+      if (interactionMode === "drag") {
+        const parentRect = getPanelRect();
+        const x = event.clientX - parentRect.left - dragOffsetX;
+        const y = event.clientY - parentRect.top - dragOffsetY;
+        setPosition(x, y, false);
+        return;
+      }
+
+      if (interactionMode !== "resize" || !resizeStart || !activeHandle) return;
+
+      const dx = event.clientX - resizeStart.pointerX;
+      const dy = event.clientY - resizeStart.pointerY;
+      const horizontalDelta = activeHandle.includes("w") ? -dx : dx;
+      const verticalDelta = activeHandle.includes("n") ? -dy * ASPECT_RATIO : dy * ASPECT_RATIO;
+      const nextWidth = resizeStart.width + Math.max(horizontalDelta, verticalDelta);
+      const clampedWidth = Math.max(MIN_OVERLAY_WIDTH, nextWidth);
+      const nextHeight = clampedWidth / ASPECT_RATIO;
+      const left = activeHandle.includes("w")
+        ? resizeStart.left + resizeStart.width - clampedWidth
+        : resizeStart.left;
+      const top = activeHandle.includes("n")
+        ? resizeStart.top + resizeStart.height - nextHeight
+        : resizeStart.top;
+
+      setOverlayBounds(left, top, clampedWidth, false);
+    });
+
+    function endInteraction(event) {
+      if (event.pointerId !== activePointerId) return;
+      activePointerId = null;
+      interactionMode = null;
+      activeHandle = null;
+      resizeStart = null;
+      if (overlayGeometryDirty) saveOverlayGeometry();
+    }
+
+    overlay.addEventListener("pointerup", endInteraction);
+    overlay.addEventListener("pointercancel", endInteraction);
+
+    opacityInput.addEventListener("input", (event) => {
+      setOverlayOpacity(Number(event.target.value));
+    });
+
+    overlay.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      if (event.shiftKey) {
+        zoomOverlayAt(event.clientX, event.clientY, Math.exp(-event.deltaY * 0.002));
+        return;
+      }
+
+      const direction = event.deltaY > 0 ? -1 : 1;
+      setOverlayOpacity(settings.overlayOpacity + direction * 0.05);
+    }, { passive: false });
+
+    function setMenuOpen(isOpen, shouldSave = true) {
+      settings.menuOpen = isOpen;
+      if (shouldSave) saveSettings();
+      controls.hidden = !isOpen;
+      menuButton.setAttribute("aria-expanded", String(isOpen));
+      menuButton.setAttribute("aria-label", isOpen ? "Close controls" : "Open controls");
+    }
+
+    menuButton.addEventListener("click", () => {
+      setMenuOpen(controls.hidden);
+    });
+
+    function updateRgbFlip() {
+      document.documentElement.style.setProperty("--rgb-flip-x", rgbFlipX.checked ? -1 : 1);
+      document.documentElement.style.setProperty("--rgb-flip-y", rgbFlipY.checked ? -1 : 1);
+    }
+
+    function redrawLastFrame() {
+      if (lastRawFrame) drawThermal(lastRawFrame);
+    }
+
+    function bindCheckboxSetting(input, key, afterChange) {
+      input.addEventListener("change", () => {
+        settings[key] = input.checked;
+        saveSettings();
+        afterChange();
+      });
+    }
+
+    bindCheckboxSetting(rgbFlipX, "rgbFlipX", updateRgbFlip);
+    bindCheckboxSetting(rgbFlipY, "rgbFlipY", updateRgbFlip);
+    bindCheckboxSetting(thermalFlipX, "thermalFlipX", redrawLastFrame);
+    bindCheckboxSetting(thermalFlipY, "thermalFlipY", redrawLastFrame);
+    bindCheckboxSetting(smoothing, "smoothing", redrawLastFrame);
+    bindCheckboxSetting(artifactReduction, "artifactReduction", redrawLastFrame);
+
+    function thermalColor(t) {
+      const scaled = clamp(t, 0, 1) * (COLOR_STOPS.length - 1);
+      const index = Math.floor(scaled);
+      const local = scaled - index;
+      const start = COLOR_STOPS[index];
+      const end = COLOR_STOPS[Math.min(index + 1, COLOR_STOPS.length - 1)];
+      return [
+        Math.round(start[0] + (end[0] - start[0]) * local),
+        Math.round(start[1] + (end[1] - start[1]) * local),
+        Math.round(start[2] + (end[2] - start[2]) * local),
+        255,
+      ];
+    }
+
+    function sampleTemperature(frame, x, y) {
+      const flippedX = thermalFlipX.checked ? frame.width - 1 - x : x;
+      const flippedY = thermalFlipY.checked ? frame.height - 1 - y : y;
+      const clampedX = clamp(flippedX, 0, frame.width - 1);
+      const clampedY = clamp(flippedY, 0, frame.height - 1);
+
+      if (!smoothing.checked) {
+        const nearestX = Math.round(clampedX);
+        const nearestY = Math.round(clampedY);
+        return frame.temperatures[nearestY * frame.width + nearestX];
+      }
+
+      const x0 = Math.floor(clampedX);
+      const y0 = Math.floor(clampedY);
+      const x1 = Math.min(x0 + 1, frame.width - 1);
+      const y1 = Math.min(y0 + 1, frame.height - 1);
+      const tx = clampedX - x0;
+      const ty = clampedY - y0;
+      const topLeft = frame.temperatures[y0 * frame.width + x0];
+      const topRight = frame.temperatures[y0 * frame.width + x1];
+      const bottomLeft = frame.temperatures[y1 * frame.width + x0];
+      const bottomRight = frame.temperatures[y1 * frame.width + x1];
+      const top = topLeft + (topRight - topLeft) * tx;
+      const bottom = bottomLeft + (bottomRight - bottomLeft) * tx;
+      return top + (bottom - top) * ty;
+    }
+
+    function median4(a, b, c, d) {
+      if (a > b) [a, b] = [b, a];
+      if (c > d) [c, d] = [d, c];
+      if (a > c) [a, c] = [c, a];
+      if (b > d) [b, d] = [d, b];
+      if (b > c) [b, c] = [c, b];
+      return (b + c) / 2;
+    }
+
+    function reduceCheckerArtifacts(frame) {
+      const temperatures = new Array(frame.temperatures.length);
+      let min = Infinity;
+      let max = -Infinity;
+
+      frame.temperatures.forEach((temperature, index) => {
+        const x = index % frame.width;
+        const y = Math.floor(index / frame.width);
+        const left = frame.temperatures[y * frame.width + Math.max(0, x - 1)];
+        const right = frame.temperatures[y * frame.width + Math.min(frame.width - 1, x + 1)];
+        const top = frame.temperatures[Math.max(0, y - 1) * frame.width + x];
+        const bottom = frame.temperatures[Math.min(frame.height - 1, y + 1) * frame.width + x];
+        const localMedian = median4(left, right, top, bottom);
+        const nextTemperature = Math.abs(temperature - localMedian) < ARTIFACT_MIN_DELTA_C
+          ? temperature
+          : temperature * 0.35 + localMedian * 0.65;
+
+        temperatures[index] = nextTemperature;
+        min = Math.min(min, nextTemperature);
+        max = Math.max(max, nextTemperature);
+      });
+
+      return {
+        ...frame,
+        temperatures,
+        min,
+        max,
+      };
+    }
+
+    function prepareFrameForDisplay(frame) {
+      if (!artifactReduction.checked) return frame;
+      return reduceCheckerArtifacts(frame);
+    }
+
+    function getDisplayIndex(frame, rawX, rawY) {
+      const x = thermalFlipX.checked ? frame.width - 1 - rawX : rawX;
+      const y = thermalFlipY.checked ? frame.height - 1 - rawY : rawY;
+      return y * frame.width + x;
+    }
+
+    function getTemperatureAtDisplayPoint(frame, displayX, displayY) {
+      const rawX = thermalFlipX.checked ? frame.width - 1 - displayX : displayX;
+      const rawY = thermalFlipY.checked ? frame.height - 1 - displayY : displayY;
+      return frame.temperatures[rawY * frame.width + rawX];
+    }
+
+    function getDisplayTemperatures(frame) {
+      const displayTemperatures = new Array(frame.temperatures.length);
+      frame.temperatures.forEach((temperature, index) => {
+        const rawX = index % frame.width;
+        const rawY = Math.floor(index / frame.width);
+        displayTemperatures[getDisplayIndex(frame, rawX, rawY)] = temperature;
+      });
+      return displayTemperatures;
+    }
+
+    function findTemperatureRegions(frame, displayTemperatures, mode, threshold) {
+      const visited = new Uint8Array(displayTemperatures.length);
+      const regions = [];
+      const isHot = mode === "hot";
+      const passes = (temperature) => isHot
+        ? temperature >= threshold
+        : temperature <= threshold;
+
+      for (let start = 0; start < displayTemperatures.length; start += 1) {
+        if (visited[start] || !passes(displayTemperatures[start])) continue;
+
+        const stack = [start];
+        visited[start] = 1;
+        let area = 0;
+        let weightedX = 0;
+        let weightedY = 0;
+        let weightTotal = 0;
+        let contrastTotal = 0;
+        let value = isHot ? -Infinity : Infinity;
+        let peakX = start % frame.width;
+        let peakY = Math.floor(start / frame.width);
+
+        while (stack.length) {
+          const index = stack.pop();
+          const x = index % frame.width;
+          const y = Math.floor(index / frame.width);
+          const temperature = displayTemperatures[index];
+          const contrast = Math.abs(temperature - threshold);
+          const weight = Math.max(0.01, contrast);
+
+          area += 1;
+          weightedX += x * weight;
+          weightedY += y * weight;
+          weightTotal += weight;
+          contrastTotal += contrast;
+
+          if ((isHot && temperature > value) || (!isHot && temperature < value)) {
+            value = temperature;
+            peakX = x;
+            peakY = y;
+          }
+
+          const neighbors = [
+            index - 1,
+            index + 1,
+            index - frame.width,
+            index + frame.width,
+          ];
+
+          for (const nextIndex of neighbors) {
+            if (nextIndex < 0 || nextIndex >= displayTemperatures.length) continue;
+            if (nextIndex === index - 1 && x === 0) continue;
+            if (nextIndex === index + 1 && x === frame.width - 1) continue;
+            if (visited[nextIndex] || !passes(displayTemperatures[nextIndex])) continue;
+            visited[nextIndex] = 1;
+            stack.push(nextIndex);
+          }
+        }
+
+        if (area < EXTREME_MIN_AREA) continue;
+
+        regions.push({
+          x: weightTotal > 0 ? weightedX / weightTotal : peakX,
+          y: weightTotal > 0 ? weightedY / weightTotal : peakY,
+          value,
+          area,
+          score: area * (contrastTotal / area),
+        });
+      }
+
+      return regions.sort((a, b) => b.score - a.score);
+    }
+
+    function findSpots(frame) {
+      let sum = 0;
+
+      frame.temperatures.forEach((temperature) => {
+        sum += temperature;
+      });
+
+      const mean = sum / frame.temperatures.length;
+      const variance = frame.temperatures.reduce((total, temperature) => {
+        const difference = temperature - mean;
+        return total + difference * difference;
+      }, 0) / frame.temperatures.length;
+      const standardDeviation = Math.sqrt(variance);
+      const threshold = Math.max(EXTREME_MIN_DELTA_C, standardDeviation * EXTREME_Z_SCORE);
+      const displayTemperatures = getDisplayTemperatures(frame);
+      const hot = findTemperatureRegions(frame, displayTemperatures, "hot", mean + threshold)[0] || null;
+      const cold = findTemperatureRegions(frame, displayTemperatures, "cold", mean - threshold)[0] || null;
+      const hotScore = hot ? hot.score : 0;
+      const coldScore = cold ? cold.score : 0;
+      const showHot = hot && (
+        !cold || hotScore >= coldScore * EXTREME_SECONDARY_SCORE_RATIO
+      );
+      const showCold = cold && (
+        !hot || coldScore >= hotScore * EXTREME_SECONDARY_SCORE_RATIO
+      );
+
+      return {
+        hot,
+        cold,
+        showHot,
+        showCold,
+      };
+    }
+
+    function spotToOverlayPoint(spot, frame) {
+      return {
+        x: (spot.x / Math.max(1, frame.width - 1)) * overlay.clientWidth,
+        y: (spot.y / Math.max(1, frame.height - 1)) * overlay.clientHeight,
+      };
+    }
+
+    function setSpotLabel(element, spot, frame) {
+      const point = spotToOverlayPoint(spot, frame);
+      element.textContent = `${spot.value.toFixed(1)} C`;
+      element.style.left = `${point.x}px`;
+      element.style.top = `${point.y}px`;
+      element.classList.remove("hidden");
+    }
+
+    function squaredDistance(a, b) {
+      const dx = a.x - b.x;
+      const dy = a.y - b.y;
+      return dx * dx + dy * dy;
+    }
+
+    function updateSpotLabels(frame) {
+      const { hot, cold, showHot, showCold } = findSpots(frame);
+
+      if (showHot) {
+        setSpotLabel(spotHot, hot, frame);
+      } else {
+        spotHot.classList.add("hidden");
+      }
+
+      if (showCold) {
+        setSpotLabel(spotCold, cold, frame);
+      } else {
+        spotCold.classList.add("hidden");
+      }
+
+      if (!mouseOverlayPoint) return;
+
+      const hideRadius = Math.max(34, Math.min(80, overlay.clientWidth * 0.16));
+      [
+        [spotHot, hot],
+        [spotCold, cold],
+      ].forEach(([element, spot]) => {
+        if (!spot) return;
+        if (element.classList.contains("hidden")) return;
+        const point = spotToOverlayPoint(spot, frame);
+        element.classList.toggle(
+          "hidden",
+          squaredDistance(mouseOverlayPoint, point) < hideRadius * hideRadius,
+        );
+      });
+    }
+
+    function updateMouseReadout(event) {
+      if (!lastFrame) return;
+
+      const rect = overlay.getBoundingClientRect();
+      const x = clamp(event.clientX - rect.left, 0, overlay.clientWidth);
+      const y = clamp(event.clientY - rect.top, 0, overlay.clientHeight);
+      const sourceX = overlay.clientWidth === 0
+        ? 0
+        : (x / overlay.clientWidth) * (lastFrame.width - 1);
+      const sourceY = overlay.clientHeight === 0
+        ? 0
+        : (y / overlay.clientHeight) * (lastFrame.height - 1);
+      const temperature = sampleTemperature(lastFrame, sourceX, sourceY);
+
+      mouseOverlayPoint = { x, y };
+      mouseReadout.textContent = `${temperature.toFixed(1)} C`;
+      mouseReadout.style.left = `${x}px`;
+      mouseReadout.style.top = `${y}px`;
+      mouseReadout.classList.remove("hidden");
+      updateSpotLabels(lastFrame);
+    }
+
+    overlay.addEventListener("pointermove", updateMouseReadout);
+    overlay.addEventListener("pointerleave", () => {
+      mouseOverlayPoint = null;
+      mouseReadout.classList.add("hidden");
+      if (lastFrame) updateSpotLabels(lastFrame);
+    });
+
+    function getRenderBuffer(width, height) {
+      if (!renderBuffer || renderBuffer.width !== width || renderBuffer.height !== height) {
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        renderBuffer = {
+          canvas,
+          context: canvas.getContext("2d"),
+          image: new ImageData(width, height),
+          width,
+          height,
+        };
+      }
+
+      return renderBuffer;
+    }
+
+    function paintThermalImage(frame, image, min, max) {
+      const span = Math.max(max - min, 0.1);
+      const data = image.data;
+
+      for (let y = 0; y < frame.height; y += 1) {
+        for (let x = 0; x < frame.width; x += 1) {
+          const temperature = getTemperatureAtDisplayPoint(frame, x, y);
+          const color = thermalColor((temperature - min) / span);
+          const offset = (y * frame.width + x) * 4;
+          data[offset] = color[0];
+          data[offset + 1] = color[1];
+          data[offset + 2] = color[2];
+          data[offset + 3] = color[3];
+        }
+      }
+    }
+
+    function drawThermal(frame) {
+      lastRawFrame = frame;
+      const displayFrame = prepareFrameForDisplay(frame);
+      lastFrame = displayFrame;
+      const min = displayFrame.min;
+      const max = displayFrame.max;
+      const buffer = getRenderBuffer(displayFrame.width, displayFrame.height);
+
+      paintThermalImage(displayFrame, buffer.image, min, max);
+      buffer.context.putImageData(buffer.image, 0, 0);
+      thermalContext.clearRect(0, 0, thermalCanvas.width, thermalCanvas.height);
+      thermalContext.imageSmoothingEnabled = smoothing.checked;
+      thermalContext.drawImage(buffer.canvas, 0, 0, thermalCanvas.width, thermalCanvas.height);
+      const mid = (min + max) / 2;
+      const low = min + (max - min) * 0.25;
+      const high = min + (max - min) * 0.75;
+      scaleMax.textContent = `${max.toFixed(1)} C`;
+      scaleHigh.textContent = `${high.toFixed(1)} C`;
+      scaleMid.textContent = `${mid.toFixed(1)} C`;
+      scaleLow.textContent = `${low.toFixed(1)} C`;
+      scaleMin.textContent = `${min.toFixed(1)} C`;
+      updateSpotLabels(displayFrame);
+      statusEl.textContent = `Overlay updated ${new Date(displayFrame.timestamp * 1000).toLocaleTimeString()}`;
+    }
+
+    function initializeOverlay() {
+      setOverlayBounds(settings.overlayLeft, settings.overlayTop, settings.overlayWidth, false);
+      overlayGeometryDirty = false;
+    }
+
+    window.addEventListener("resize", () => {
+      resizeCanvasToOverlay();
+    });
+
+    cameraStream.addEventListener("load", () => {
+      resizeCanvasToOverlay();
+    });
+
+    function drawScalePreview() {
+      const buffer = getRenderBuffer(WIDTH, HEIGHT);
+      const denominator = WIDTH + HEIGHT - 2;
+
+      for (let y = 0; y < HEIGHT; y += 1) {
+        for (let x = 0; x < WIDTH; x += 1) {
+          const color = thermalColor((x + y) / denominator);
+          const offset = (y * WIDTH + x) * 4;
+          buffer.image.data[offset] = color[0];
+          buffer.image.data[offset + 1] = color[1];
+          buffer.image.data[offset + 2] = color[2];
+          buffer.image.data[offset + 3] = color[3];
+        }
+      }
+
+      buffer.context.putImageData(buffer.image, 0, 0);
+      thermalContext.imageSmoothingEnabled = true;
+      thermalContext.drawImage(buffer.canvas, 0, 0, thermalCanvas.width, thermalCanvas.height);
+    }
+
+    function updateWaitingState() {
+      if (lastFrame) return;
+      drawScalePreview();
+    }
+
+    async function pollThermal() {
+      try {
+        const response = await fetch("/thermal", { cache: "no-store" });
+        if (!response.ok) throw new Error("No frame");
+        const frame = await response.json();
+        drawThermal(frame);
+      } catch (error) {
+        statusEl.textContent = "Waiting for thermal overlay...";
+        updateWaitingState();
+      } finally {
+        setTimeout(pollThermal, THERMAL_POLL_MS);
+      }
+    }
+
+    function startLiveReload() {
+      let currentVersion = null;
+
+      async function checkVersion() {
+        try {
+          const response = await fetch("/reload-version", { cache: "no-store" });
+          if (!response.ok) return;
+          const { version } = await response.json();
+          if (currentVersion === null) {
+            currentVersion = version;
+            return;
+          }
+          if (version !== currentVersion) {
+            window.location.reload();
+          }
+        } catch (error) {
+          return;
+        }
+      }
+
+      checkVersion();
+      setInterval(checkVersion, 1000);
+    }
+
+    applySettings();
+    initializeOverlay();
+    startLiveReload();
+    pollThermal();
+  </script>
+</body>
+</html>
