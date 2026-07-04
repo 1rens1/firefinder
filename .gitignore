@@ -3,6 +3,6 @@ __pycache__/
 *.egg-info/
 *.pt
 *.onnx
-datasets/
+./datasets/
 *.zip
 *.FCBak
