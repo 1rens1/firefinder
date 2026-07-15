@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Firefinder</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --rgb-flip-x: 1;
+      --rgb-flip-y: 1;
+      background: #000;
+      color: #f6f8fb;
+    }
+
+    * { box-sizing: border-box; }
+
+    html,
+    body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+
+    .camera-panel {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: #000;
+    }
+
+    #camera-stream,
+    #overlay {
+      position: absolute;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    #camera-stream {
+      display: block;
+      object-fit: contain;
+      object-position: center;
+      transform: scale(var(--rgb-flip-x), var(--rgb-flip-y));
+    }
+
+    #overlay {
+      pointer-events: none;
+    }
+
+    .hud {
+      position: fixed;
+      z-index: 5;
+      color: #f6f8fb;
+      background: rgba(5, 8, 13, 0.74);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 8px;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.38);
+      backdrop-filter: blur(10px);
+    }
+
+    .status-panel {
+      top: 14px;
+      left: 14px;
+      width: min(260px, calc(100vw - 28px));
+      padding: 10px 14px;
+    }
+
+    #status {
+      font-size: 1rem;
+      font-weight: 750;
+      line-height: 1.2;
+    }
+
+    #detectionList {
+      margin-top: 6px;
+      color: #cbd5e1;
+      display: grid;
+      gap: 2px;
+      font-size: 0.8rem;
+      line-height: 1.25;
+    }
+
+    .controls {
+      right: 14px;
+      bottom: 14px;
+      padding: 8px;
+      display: flex;
+      gap: 8px;
+    }
+
+    .toggle {
+      min-height: 34px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.06);
+      color: #e5edf7;
+      font-size: 0.82rem;
+      font-weight: 650;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .toggle input {
+      margin: 0;
+      accent-color: #ffcd43;
+    }
+  </style>
+</head>
+<body>
+  <section class="camera-panel" aria-label="Fire and smoke detection feed">
+    <img id="camera-stream" src="/stream" alt="Camera stream">
+    <canvas id="overlay" aria-hidden="true"></canvas>
+    <div class="status-panel hud">
+      <div id="status">Waiting for detections...</div>
+      <div id="detectionList"></div>
+    </div>
+    <div class="controls hud" aria-label="Camera flip controls">
+      <label class="toggle"><input id="flipX" type="checkbox"> Horizontal</label>
+      <label class="toggle"><input id="flipY" type="checkbox"> Vertical</label>
+    </div>
+  </section>
+
+  <script>
+    const cameraStream = document.getElementById("camera-stream");
+    const overlay = document.getElementById("overlay");
+    const context = overlay.getContext("2d");
+    const statusEl = document.getElementById("status");
+    const listEl = document.getElementById("detectionList");
+    const flipX = document.getElementById("flipX");
+    const flipY = document.getElementById("flipY");
+
+    const SETTINGS_KEY = "firefinder:view";
+    const POLL_MS = 300;
+    const STATUS_COLORS = {
+      "Fire detected": "#ff3b30",
+      "Smoke detected": "#ffb400",
+      "Clear": "#34c759",
+    };
+    const BOX_COLORS = {
+      fire: "#ff5a00",
+      smoke: "#cbd5e1",
+    };
+
+    let latestData = null;
+
+    function loadSettings() {
+      try {
+        return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {};
+      } catch (error) {
+        return {};
+      }
+    }
+
+    function saveSettings() {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+        flipX: flipX.checked,
+        flipY: flipY.checked,
+      }));
+    }
+
+    function applyFlip() {
+      document.documentElement.style.setProperty("--rgb-flip-x", flipX.checked ? -1 : 1);
+      document.documentElement.style.setProperty("--rgb-flip-y", flipY.checked ? -1 : 1);
+      drawOverlay();
+    }
+
+    function resizeOverlay() {
+      const width = Math.max(1, Math.round(window.innerWidth * window.devicePixelRatio));
+      const height = Math.max(1, Math.round(window.innerHeight * window.devicePixelRatio));
+
+      if (overlay.width !== width || overlay.height !== height) {
+        overlay.width = width;
+        overlay.height = height;
+      }
+
+      overlay.style.width = `${window.innerWidth}px`;
+      overlay.style.height = `${window.innerHeight}px`;
+      drawOverlay();
+    }
+
+    function getImageRect(frame) {
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      const frameRatio = frame.width / frame.height;
+      const viewportRatio = viewportWidth / viewportHeight;
+      let width = viewportWidth;
+      let height = viewportHeight;
+
+      if (viewportRatio > frameRatio) {
+        width = height * frameRatio;
+      } else {
+        height = width / frameRatio;
+      }
+
+      return {
+        x: (viewportWidth - width) / 2,
+        y: (viewportHeight - height) / 2,
+        width,
+        height,
+      };
+    }
+
+    function mapBox(box, frame, imageRect) {
+      let [x1, y1, x2, y2] = box;
+
+      if (flipX.checked) {
+        [x1, x2] = [frame.width - x2, frame.width - x1];
+      }
+
+      if (flipY.checked) {
+        [y1, y2] = [frame.height - y2, frame.height - y1];
+      }
+
+      const scaleX = imageRect.width / frame.width;
+      const scaleY = imageRect.height / frame.height;
+
+      return {
+        x: imageRect.x + x1 * scaleX,
+        y: imageRect.y + y1 * scaleY,
+        width: (x2 - x1) * scaleX,
+        height: (y2 - y1) * scaleY,
+      };
+    }
+
+    function drawLabel(text, x, y, color) {
+      const paddingX = 6;
+      const paddingY = 4;
+      context.font = "600 14px system-ui, sans-serif";
+      const metrics = context.measureText(text);
+      const labelWidth = metrics.width + paddingX * 2;
+      const labelHeight = 22;
+      const labelX = Math.max(4, Math.min(x, window.innerWidth - labelWidth - 4));
+      const labelY = Math.max(4, y - labelHeight);
+
+      context.fillStyle = "rgba(5, 8, 13, 0.82)";
+      context.fillRect(labelX, labelY, labelWidth, labelHeight);
+      context.fillStyle = color;
+      context.fillText(text, labelX + paddingX, labelY + labelHeight - paddingY - 2);
+    }
+
+    function drawOverlay() {
+      context.setTransform(window.devicePixelRatio, 0, 0, window.devicePixelRatio, 0, 0);
+      context.clearRect(0, 0, window.innerWidth, window.innerHeight);
+
+      if (!latestData || !latestData.frame) {
+        return;
+      }
+
+      const imageRect = getImageRect(latestData.frame);
+      context.lineWidth = 2;
+      context.textBaseline = "alphabetic";
+
+      for (const detection of latestData.detections || []) {
+        const color = BOX_COLORS[String(detection.label).toLowerCase()] || "#34c759";
+        const box = mapBox(detection.box, latestData.frame, imageRect);
+        const label = `${detection.label} ${Math.round(detection.confidence * 100)}%`;
+
+        context.strokeStyle = color;
+        context.strokeRect(box.x, box.y, box.width, box.height);
+        drawLabel(label, box.x + 4, box.y - 6, color);
+      }
+    }
+
+    function updateHud(data) {
+      statusEl.textContent = data.status;
+      statusEl.style.color = STATUS_COLORS[data.status] || "#f6f8fb";
+      listEl.textContent = "";
+
+      for (const detection of data.detections || []) {
+        const row = document.createElement("div");
+        row.textContent = `${detection.label} ${Math.round(detection.confidence * 100)}%`;
+        listEl.appendChild(row);
+      }
+    }
+
+    async function pollDetections() {
+      try {
+        const response = await fetch("/detections", { cache: "no-store" });
+        if (!response.ok) throw new Error("Detections unavailable");
+        latestData = await response.json();
+        updateHud(latestData);
+        drawOverlay();
+      } catch (error) {
+        statusEl.textContent = "Waiting for detections...";
+        statusEl.style.color = "#f6f8fb";
+        listEl.textContent = "";
+      } finally {
+        setTimeout(pollDetections, POLL_MS);
+      }
+    }
+
+    const settings = loadSettings();
+    flipX.checked = Boolean(settings.flipX);
+    flipY.checked = Boolean(settings.flipY);
+    applyFlip();
+
+    flipX.addEventListener("change", () => {
+      saveSettings();
+      applyFlip();
+    });
+    flipY.addEventListener("change", () => {
+      saveSettings();
+      applyFlip();
+    });
+    window.addEventListener("resize", resizeOverlay);
+    cameraStream.addEventListener("load", resizeOverlay);
+
+    resizeOverlay();
+    pollDetections();
+  </script>
+</body>
+</html>

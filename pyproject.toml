@@ -6,6 +6,8 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "adafruit-circuitpython-mlx90640>=1.3.3",
+    "modlib>=1.5.0",
+    "ultralytics>=8.4.87",
 ]
 
 [dependency-groups]
@@ -18,6 +20,8 @@ firefinder-camera-demo = "cam_demo.camera_demo:main"
 firefinder-mlx-demo = "mlx_demo.main:main"
 firefinder-camera-mlx-demo = "cam_mlx_demo.main:main"
 firefinder-object-detection-demo = "cam_demo.object_detection_demo:main"
+firefinder-fire-detection-demo = "cam_demo.fire_detection_demo:main"
+firefinder-server = "firefinder.main:main"
 
 [build-system]
 requires = ["setuptools>=80.0"]

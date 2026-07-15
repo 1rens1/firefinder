@@ -37,8 +37,15 @@ src/
 
 ## Run
 
+On Raspberry Pi, use the venv entrypoints directly so system-installed packages like `picamera2` stay available:
+
 ```sh
-uv run firefinder-camera-demo
-uv run firefinder-object-detection-demo
+./scripts/setup-pi.sh
+.venv/bin/firefinder-camera-demo
+.venv/bin/firefinder-object-detection-demo
+.venv/bin/firefinder-camera-mlx-demo
+.venv/bin/firefinder-fire-detection-demo
 ```
+
+`uv run` may recreate the project venv and reset `include-system-site-packages` to `false`, which breaks apt-installed Pi camera packages.
 
